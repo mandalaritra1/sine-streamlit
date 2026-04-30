@@ -258,6 +258,7 @@ def render_range_slices(samples: list[Sample], reference: hist.Hist, mtt_edges: 
     with control_cols[3]:
         density = st.checkbox("Density", value=True, key="slice-density")
         show_ratio = st.checkbox("QCD + TTbar ratio", value=True, key="slice-ratio")
+        show_ttbar_qcd_ratio = st.checkbox("TTbar/QCD ratio", value=False, key="slice-ttbar-qcd-ratio")
     with control_cols[4]:
         log_y = st.checkbox("Log y", value=True, key="slice-log-y")
 
@@ -295,7 +296,7 @@ def render_range_slices(samples: list[Sample], reference: hist.Hist, mtt_edges: 
         for col, (label, projected) in zip(cols, sliced_groups[row_start : row_start + 2]):
             with col:
                 st.markdown(f"#### {label}")
-                render_1d(projected, "ttbarmass", density, log_y, show_ratio)
+                render_1d(projected, "ttbarmass", density, log_y, show_ratio, show_ttbar_qcd_ratio)
 
 
 def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> None:
@@ -307,6 +308,7 @@ def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> Non
     with control_cols[1]:
         density = st.checkbox("Density", value=True, key="projection-density")
         show_ratio = st.checkbox("QCD + TTbar ratio", value=True, key="projection-ratio")
+        show_ttbar_qcd_ratio = st.checkbox("TTbar/QCD ratio", value=False, key="projection-ttbar-qcd-ratio")
     with control_cols[2]:
         log_y = st.checkbox("Log y", value=True, key="projection-log-y")
 
@@ -345,11 +347,11 @@ def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> Non
         cols = st.columns(2)
         with cols[0]:
             st.markdown(f"#### {axis_label(projected_dy[0][1], axis_name_dy)} | {range_label}")
-            render_1d(projected_dy, axis_name_dy, density, log_y, show_ratio)
+            render_1d(projected_dy, axis_name_dy, density, log_y, show_ratio, show_ttbar_qcd_ratio)
         with cols[1]:
             if projected_chi is not None:
                 st.markdown(f"#### {axis_label(projected_chi[0][1], 'chi')} | {range_label}")
-                render_1d(projected_chi, "chi", density, log_y, show_ratio)
+                render_1d(projected_chi, "chi", density, log_y, show_ratio, show_ttbar_qcd_ratio)
 
 
 def next_group(
@@ -483,12 +485,28 @@ def render_1d(
     density: bool,
     log_scale: bool,
     show_ratio: bool,
+    show_ttbar_qcd_ratio: bool,
 ) -> None:
+    ratio_kinds = []
     if show_ratio:
-        fig, (ax, rax) = plt.subplots(2, 1, figsize=(8.8, 6.2), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+        ratio_kinds.append("signal_over_background")
+    if show_ttbar_qcd_ratio:
+        ratio_kinds.append("ttbar_over_qcd")
+
+    if ratio_kinds:
+        height_ratios = [3] + [1] * len(ratio_kinds)
+        fig, axes = plt.subplots(
+            1 + len(ratio_kinds),
+            1,
+            figsize=(8.8, 5.0 + 1.25 * len(ratio_kinds)),
+            sharex=True,
+            gridspec_kw={"height_ratios": height_ratios},
+        )
+        ax = axes[0]
+        ratio_axes = list(axes[1:])
     else:
         fig, ax = plt.subplots(figsize=(8.8, 4.8))
-        rax = None
+        ratio_axes = []
 
     for sample, hist_obj in projected:
         values = np.asarray(hist_obj.values(), dtype=float)
@@ -506,7 +524,7 @@ def render_1d(
             label=f"{sample.role} ({values.sum():.3g})",
         )
 
-    ax.set_xlabel(axis_label(projected[0][1], axis_name) if rax is None else "", fontsize=17)
+    ax.set_xlabel(axis_label(projected[0][1], axis_name) if not ratio_axes else "", fontsize=17)
     ax.set_ylabel("Density" if density else "Events", fontsize=17, labelpad=8)
     ax.tick_params(axis="both", which="major", labelsize=14)
     ax.tick_params(axis="both", which="minor", labelsize=12)
@@ -515,35 +533,59 @@ def render_1d(
         ax.set_ylim(bottom=max(ax.get_ylim()[0], 1e-6 if density else 1e-3))
     ax.legend(fontsize=16, handlelength=1.5)
 
-    if rax is not None:
-        render_ratio(projected, axis_name, rax, density)
-        rax.set_xlabel(axis_label(projected[0][1], axis_name), fontsize=17)
+    for ratio_kind, ratio_ax in zip(ratio_kinds, ratio_axes):
+        render_ratio(projected, axis_name, ratio_ax, density, ratio_kind)
+    if ratio_axes:
+        ratio_axes[-1].set_xlabel(axis_label(projected[0][1], axis_name), fontsize=17)
 
-    fig.subplots_adjust(left=0.18, right=0.97, top=0.96, bottom=0.16 if rax is not None else 0.18, hspace=0.08)
+    fig.subplots_adjust(left=0.18, right=0.97, top=0.96, bottom=0.13 if ratio_axes else 0.18, hspace=0.08)
     st.pyplot(fig, clear_figure=True)
 
 
-def render_ratio(projected: list[tuple[Sample, hist.Hist]], axis_name: str, ax: Any, density: bool) -> None:
+def render_ratio(
+    projected: list[tuple[Sample, hist.Hist]],
+    axis_name: str,
+    ax: Any,
+    density: bool,
+    ratio_kind: str,
+) -> None:
     by_role = {sample.role: hist_obj for sample, hist_obj in projected}
-    if "Signal" not in by_role or not {"TTbar", "QCD"}.issubset(by_role):
-        ax.text(0.5, 0.5, "Load Signal, TTbar, and QCD for ratio", ha="center", va="center", transform=ax.transAxes)
+    if ratio_kind == "signal_over_background":
+        missing = {"Signal", "TTbar", "QCD"} - set(by_role)
+        ylabel = "S/B"
+    else:
+        missing = {"TTbar", "QCD"} - set(by_role)
+        ylabel = "TT/QCD"
+
+    if missing:
+        ax.text(0.5, 0.5, f"Missing {', '.join(sorted(missing))}", ha="center", va="center", transform=ax.transAxes)
         return
 
-    signal = np.asarray(by_role["Signal"].values(), dtype=float)
-    background = np.asarray(by_role["TTbar"].values(), dtype=float) + np.asarray(by_role["QCD"].values(), dtype=float)
-    if density:
-        if signal.sum() > 0:
-            signal = signal / signal.sum()
-        if background.sum() > 0:
-            background = background / background.sum()
-    ratio = np.divide(signal, background, out=np.full_like(signal, np.nan), where=background != 0)
-    edges = axis_by_name(by_role["Signal"], axis_name).edges
+    if ratio_kind == "signal_over_background":
+        numerator = ratio_values(by_role["Signal"], density)
+        denominator = ratio_values(by_role["TTbar"], density) + ratio_values(by_role["QCD"], density)
+        edges = axis_by_name(by_role["Signal"], axis_name).edges
+    else:
+        numerator = ratio_values(by_role["TTbar"], density)
+        denominator = ratio_values(by_role["QCD"], density)
+        edges = axis_by_name(by_role["TTbar"], axis_name).edges
+
+    ratio = np.divide(numerator, denominator, out=np.full_like(numerator, np.nan), where=denominator != 0)
     ax.stairs(ratio, edges, color="black")
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0)
-    ax.set_ylabel("S/B", fontsize=16, labelpad=10)
+    ax.set_ylabel(ylabel, fontsize=16, labelpad=10)
     ax.tick_params(axis="both", which="major", labelsize=14)
     ax.tick_params(axis="both", which="minor", labelsize=12)
     ax.set_ylim(bottom=0)
+
+
+def ratio_values(hist_obj: hist.Hist, density: bool) -> np.ndarray:
+    values = np.asarray(hist_obj.values(), dtype=float)
+    if density:
+        total = values.sum()
+        if total > 0:
+            values = values / total
+    return values
 
 
 def render_yields(projected: list[tuple[Sample, hist.Hist]]) -> None:
