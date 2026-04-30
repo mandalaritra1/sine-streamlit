@@ -3,6 +3,7 @@ from __future__ import annotations
 import pickle
 import re
 import os
+import gc
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -37,8 +38,8 @@ class Sample:
     filename: str
     color: str
     scale: float
-    output: Any
     hist_obj: hist.Hist
+    summary: list[dict[str, str]]
 
 
 st.set_page_config(page_title="TTbar histogram viewer", layout="wide")
@@ -69,8 +70,8 @@ def list_share(token: str) -> list[tuple[str, int]]:
     return sorted(items)
 
 
-@st.cache_data(ttl=600, show_spinner="Downloading and loading file...")
-def load_remote(token: str, filename: str, size: int) -> Any:
+@st.cache_resource(ttl=600, show_spinner="Downloading and loading histogram...")
+def load_remote_hist(token: str, filename: str, size: int) -> tuple[hist.Hist, list[dict[str, str]]]:
     del size
     url = f"{DAV_BASE}/{token}/{filename}"
     response = requests.get(url, timeout=120)
@@ -82,10 +83,19 @@ def load_remote(token: str, filename: str, size: int) -> Any:
         path = handle.name
 
     try:
-        return coffea_load(path)
+        output = coffea_load(path)
     except Exception:
         with open(path, "rb") as handle:
-            return pickle.load(handle)
+            output = pickle.load(handle)
+
+    try:
+        hist_obj = find_3d_hist(output)
+        summary = summarize_output(output)
+    finally:
+        del output
+        gc.collect()
+
+    return hist_obj, summary
 
 
 def main() -> None:
@@ -94,7 +104,7 @@ def main() -> None:
         token = st.text_input("CERNBox share token", DEFAULT_TOKEN)
         if st.button("Refresh share", use_container_width=True):
             list_share.clear()
-            load_remote.clear()
+            load_remote_hist.clear()
             st.session_state["load_requested"] = False
         files = get_files_or_stop(token)
         samples = load_samples(token, files)
@@ -107,7 +117,7 @@ def main() -> None:
     render_viewer(samples)
 
     with st.expander("Loaded object summary", expanded=False):
-        render_raw_summary(samples)
+        render_loaded_summary(samples)
 
 
 def get_files_or_stop(token: str) -> list[tuple[str, int]]:
@@ -152,13 +162,12 @@ def load_samples(token: str, files: list[tuple[str, int]]) -> list[Sample]:
 
     for role, filename, color, scale, size in selected:
         try:
-            output = load_remote(token, filename, size)
-            hist_obj = find_3d_hist(output)
+            hist_obj, summary = load_remote_hist(token, filename, size)
         except Exception as exc:
             st.error(f"Could not load `{filename}` as a {', '.join(THREE_D_AXES)} histogram.")
             st.exception(exc)
             continue
-        samples.append(Sample(role, filename, color, scale, output, hist_obj))
+        samples.append(Sample(role, filename, color, scale, hist_obj, summary))
 
     return samples
 
@@ -189,6 +198,15 @@ def find_3d_hist(output: Any) -> hist.Hist:
         found = ", ".join(f"{key}: {', '.join(axis_names(value))}" for key, value in hists.items())
         raise ValueError(f"No histogram has axes {THREE_D_AXES}. Found: {found or 'no hist.Hist objects'}")
     return candidates[0]
+
+
+def summarize_output(output: Any) -> list[dict[str, str]]:
+    if not isinstance(output, Mapping):
+        return [{"key": "(root)", "type": type(output).__name__, "summary": summarize(output)}]
+    rows = []
+    for key, value in output.items():
+        rows.append({"key": str(key), "type": type(value).__name__, "summary": summarize(value)})
+    return rows
 
 
 def render_summary(samples: list[Sample]) -> None:
@@ -538,16 +556,10 @@ def render_yields(projected: list[tuple[Sample, hist.Hist]]) -> None:
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
-def render_raw_summary(samples: list[Sample]) -> None:
+def render_loaded_summary(samples: list[Sample]) -> None:
     for sample in samples:
         st.markdown(f"**{sample.role}: `{sample.filename}`**")
-        if isinstance(sample.output, Mapping):
-            rows = []
-            for key, value in sample.output.items():
-                rows.append({"key": str(key), "type": type(value).__name__, "summary": summarize(value)})
-            st.dataframe(rows, use_container_width=True, hide_index=True)
-        else:
-            st.code(repr(sample.output)[:3000])
+        st.dataframe(sample.summary, use_container_width=True, hide_index=True)
 
 
 def rebin_hist(h: hist.Hist, axis_name: str, edges: int | np.ndarray) -> hist.Hist:
