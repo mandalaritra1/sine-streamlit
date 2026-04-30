@@ -485,9 +485,9 @@ def render_1d(
     show_ratio: bool,
 ) -> None:
     if show_ratio:
-        fig, (ax, rax) = plt.subplots(2, 1, figsize=(8.5, 6.5), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
+        fig, (ax, rax) = plt.subplots(2, 1, figsize=(8.8, 6.2), sharex=True, gridspec_kw={"height_ratios": [3, 1]})
     else:
-        fig, ax = plt.subplots(figsize=(8.5, 5.0))
+        fig, ax = plt.subplots(figsize=(8.8, 4.8))
         rax = None
 
     for sample, hist_obj in projected:
@@ -506,18 +506,20 @@ def render_1d(
             label=f"{sample.role} ({values.sum():.3g})",
         )
 
-    ax.set_xlabel(axis_label(projected[0][1], axis_name) if rax is None else "")
-    ax.set_ylabel("Density" if density else "Events")
+    ax.set_xlabel(axis_label(projected[0][1], axis_name) if rax is None else "", fontsize=17)
+    ax.set_ylabel("Density" if density else "Events", fontsize=17, labelpad=8)
+    ax.tick_params(axis="both", which="major", labelsize=14)
+    ax.tick_params(axis="both", which="minor", labelsize=12)
     if log_scale:
         ax.set_yscale("log")
         ax.set_ylim(bottom=max(ax.get_ylim()[0], 1e-6 if density else 1e-3))
-    ax.legend()
+    ax.legend(fontsize=16, handlelength=1.5)
 
     if rax is not None:
         render_ratio(projected, axis_name, rax, density)
-        rax.set_xlabel(axis_label(projected[0][1], axis_name))
+        rax.set_xlabel(axis_label(projected[0][1], axis_name), fontsize=17)
 
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.18, right=0.97, top=0.96, bottom=0.16 if rax is not None else 0.18, hspace=0.08)
     st.pyplot(fig, clear_figure=True)
 
 
@@ -538,7 +540,9 @@ def render_ratio(projected: list[tuple[Sample, hist.Hist]], axis_name: str, ax: 
     edges = axis_by_name(by_role["Signal"], axis_name).edges
     ax.stairs(ratio, edges, color="black")
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0)
-    ax.set_ylabel("S/(TT+QCD)")
+    ax.set_ylabel("S/B", fontsize=16, labelpad=10)
+    ax.tick_params(axis="both", which="major", labelsize=14)
+    ax.tick_params(axis="both", which="minor", labelsize=12)
     ax.set_ylim(bottom=0)
 
 
