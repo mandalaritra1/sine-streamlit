@@ -95,11 +95,12 @@ def main() -> None:
         if st.button("Refresh share", use_container_width=True):
             list_share.clear()
             load_remote.clear()
+            st.session_state["load_requested"] = False
         files = get_files_or_stop(token)
         samples = load_samples(token, files)
 
     if not samples:
-        st.info("Choose at least one Signal, TTbar, or QCD file from the sidebar.")
+        st.info("Choose files in the sidebar, then click **Load selected files**.")
         return
 
     render_summary(samples)
@@ -123,6 +124,7 @@ def get_files_or_stop(token: str) -> list[tuple[str, int]]:
 
 def load_samples(token: str, files: list[tuple[str, int]]) -> list[Sample]:
     labels = ["<none>"] + [f"{name} ({size / 1024:.1f} KB)" for name, size in files]
+    selected: list[tuple[str, str, str, float, int]] = []
     samples: list[Sample] = []
 
     for role, (default_color, default_scale) in SAMPLE_DEFAULTS.items():
@@ -136,6 +138,19 @@ def load_samples(token: str, files: list[tuple[str, int]]) -> list[Sample]:
             continue
 
         filename, size = files[labels.index(choice) - 1]
+        selected.append((role, filename, color, float(scale), size))
+
+    if not selected:
+        st.session_state["load_requested"] = False
+        return []
+
+    st.caption(f"{len(selected)} file(s) selected. Loading starts only after clicking the button below.")
+    if st.button("Load selected files", type="primary", use_container_width=True):
+        st.session_state["load_requested"] = True
+    if not st.session_state.get("load_requested", False):
+        return []
+
+    for role, filename, color, scale, size in selected:
         try:
             output = load_remote(token, filename, size)
             hist_obj = find_3d_hist(output)
@@ -143,7 +158,7 @@ def load_samples(token: str, files: list[tuple[str, int]]) -> list[Sample]:
             st.error(f"Could not load `{filename}` as a {', '.join(THREE_D_AXES)} histogram.")
             st.exception(exc)
             continue
-        samples.append(Sample(role, filename, color, float(scale), output, hist_obj))
+        samples.append(Sample(role, filename, color, scale, output, hist_obj))
 
     return samples
 
