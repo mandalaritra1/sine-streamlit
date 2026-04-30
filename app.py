@@ -382,7 +382,7 @@ def contiguous_range_controls(
         st.caption(f"{axis_name}: {low:g}-{high:g}")
         return [(f"{axis_name}: {low:g}-{high:g}", (low, high))]
 
-    default_indices = np.linspace(0, len(edge_options) - 1, n_ranges + 1).round().astype(int)[1:-1]
+    default_indices = default_boundary_indices(axis_name, edge_options, n_ranges)
     boundary_values = []
     cols = st.columns(min(3, n_ranges - 1))
     for idx, default_idx in enumerate(default_indices):
@@ -408,6 +408,17 @@ def contiguous_range_controls(
 
     st.caption(" | ".join(label for label, _ in ranges))
     return ranges
+
+
+def default_boundary_indices(axis_name: str, edge_options: list[float], n_ranges: int) -> np.ndarray:
+    if axis_name == "ttbarmass" and n_ranges == 2:
+        return np.asarray([nearest_edge_index(edge_options, 2000.0)], dtype=int)
+    return np.linspace(0, len(edge_options) - 1, n_ranges + 1).round().astype(int)[1:-1]
+
+
+def nearest_edge_index(edge_options: list[float], target: float) -> int:
+    edges = np.asarray(edge_options, dtype=float)
+    return int(np.argmin(np.abs(edges - target)))
 
 
 def rebin_controls(reference: hist.Hist, key_prefix: str) -> dict[str, int | np.ndarray]:
