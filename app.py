@@ -257,9 +257,9 @@ def render_range_slices(samples: list[Sample], reference: hist.Hist, mtt_edges: 
         n_ranges = st.selectbox("Slices", [1, 2, 3, 4], index=1, key="slice-count")
     with control_cols[3]:
         density = st.checkbox("Density", value=True, key="slice-density")
-        show_ratio = st.checkbox("QCD + TTbar ratio", value=False, key="slice-ratio")
+        show_ratio = st.checkbox("QCD + TTbar ratio", value=True, key="slice-ratio")
     with control_cols[4]:
-        log_y = st.checkbox("Log y", value=False, key="slice-log-y")
+        log_y = st.checkbox("Log y", value=True, key="slice-log-y")
 
     rebin_specs = rebin_controls(reference, key_prefix="slice")
     ranges = contiguous_range_controls(reference, slice_axis, int(n_ranges), key_prefix="slice")
@@ -306,9 +306,9 @@ def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> Non
         n_ranges = st.selectbox("Slices", [1, 2, 3, 4], index=1, key="projection-slice-count")
     with control_cols[1]:
         density = st.checkbox("Density", value=True, key="projection-density")
-        show_ratio = st.checkbox("QCD + TTbar ratio", value=False, key="projection-ratio")
+        show_ratio = st.checkbox("QCD + TTbar ratio", value=True, key="projection-ratio")
     with control_cols[2]:
-        log_y = st.checkbox("Log y", value=False, key="projection-log-y")
+        log_y = st.checkbox("Log y", value=True, key="projection-log-y")
 
     rebin_specs = rebin_controls(reference, key_prefix="projection")
     ranges = contiguous_range_controls(reference, "ttbarmass", int(n_ranges), key_prefix="projection")
