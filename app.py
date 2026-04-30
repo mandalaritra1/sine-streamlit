@@ -233,13 +233,55 @@ def fold_signed_jetdy(hist_obj: hist.Hist) -> hist.Hist:
     neg[axis_idx] = slice(half - 1, None, -1)
 
     src_vals = np.asarray(hist_obj.values(flow=False))
-    folded.values(flow=False)[...] = src_vals[tuple(pos)] + src_vals[tuple(neg)]
+    folded_vals = src_vals[tuple(pos)] + src_vals[tuple(neg)]
+    add_signed_jetdy_flow_to_last_bin(hist_obj, folded_vals, axis_idx, variances=False)
+    folded.values(flow=False)[...] = folded_vals
 
     if storage_type(hist_obj) == hist.storage.Weight():
         src_var = np.asarray(hist_obj.variances(flow=False))
-        folded.variances(flow=False)[...] = src_var[tuple(pos)] + src_var[tuple(neg)]
+        folded_var = src_var[tuple(pos)] + src_var[tuple(neg)]
+        add_signed_jetdy_flow_to_last_bin(hist_obj, folded_var, axis_idx, variances=True)
+        folded.variances(flow=False)[...] = folded_var
 
     return folded
+
+
+def add_signed_jetdy_flow_to_last_bin(
+    hist_obj: hist.Hist,
+    folded_values: np.ndarray,
+    axis_idx: int,
+    variances: bool,
+) -> None:
+    jetdy_axis = axis_by_name(hist_obj, "jetdy")
+    if not (jetdy_axis.traits.underflow or jetdy_axis.traits.overflow):
+        return
+
+    source = np.asarray(hist_obj.variances(flow=True) if variances else hist_obj.values(flow=True))
+    target_last_bin = [slice(None)] * folded_values.ndim
+    target_last_bin[axis_idx] = -1
+
+    for flow_idx in signed_jetdy_flow_indices(jetdy_axis):
+        source_flow = regular_flow_slices(hist_obj)
+        source_flow[axis_idx] = flow_idx
+        folded_values[tuple(target_last_bin)] += source[tuple(source_flow)]
+
+
+def signed_jetdy_flow_indices(axis: Any) -> list[int]:
+    indices = []
+    if axis.traits.underflow:
+        indices.append(0)
+    if axis.traits.overflow:
+        indices.append(-1)
+    return indices
+
+
+def regular_flow_slices(hist_obj: hist.Hist) -> list[Any]:
+    slices = []
+    for axis in hist_obj.axes:
+        start = 1 if axis.traits.underflow else None
+        stop = -1 if axis.traits.overflow else None
+        slices.append(slice(start, stop))
+    return slices
 
 
 def _clone_axis(axis: Any) -> Any:
