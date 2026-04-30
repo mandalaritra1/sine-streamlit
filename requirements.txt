@@ -1,2 +1,7 @@
 streamlit
 numpy
+requests
+matplotlib
+mplhep
+hist
+coffea
