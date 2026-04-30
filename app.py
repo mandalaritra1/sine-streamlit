@@ -211,40 +211,58 @@ def fold_signed_jetdy(hist_obj: hist.Hist) -> hist.Hist:
     if not np.isclose(abs(edges[0]), edges[-1]):
         return hist_obj
 
-    abs_edges = edges[edges >= 0]
+    n = jetdy_axis.size
+    if n % 2 != 0:
+        return hist_obj
+    half = n // 2
+    abs_edges = edges[half:]
     if len(abs_edges) < 2:
         return hist_obj
 
-    folded_axis = hist.axis.Variable(abs_edges, name="jetdy", label=r"$|\Delta y|$")
-    new_axes = [folded_axis if (axis.name == "jetdy") else axis for axis in hist_obj.axes]
+    axis_idx = axis_names(hist_obj).index("jetdy")
+    folded_jetdy = hist.axis.Variable(abs_edges, name="jetdy", label=r"$|\Delta y|$")
+    new_axes = [
+        folded_jetdy if axis.name == "jetdy" else _clone_axis(axis)
+        for axis in hist_obj.axes
+    ]
     folded = hist.Hist(*new_axes, name=hist_obj.name, storage=storage_type(hist_obj))
 
-    axis_idx = axis_names(hist_obj).index("jetdy")
-    values = np.asarray(hist_obj.values(flow=False))
-    folded_values = np.zeros_like(folded.values(flow=False))
-    centers = np.asarray(jetdy_axis.centers, dtype=float)
-    target_indices = folded_axis.index(np.abs(centers))
+    pos = [slice(None)] * hist_obj.ndim
+    neg = [slice(None)] * hist_obj.ndim
+    pos[axis_idx] = slice(half, n)
+    neg[axis_idx] = slice(half - 1, None, -1)
 
-    for source_idx, target_idx in enumerate(target_indices):
-        source_slice = [slice(None)] * values.ndim
-        target_slice = [slice(None)] * folded_values.ndim
-        source_slice[axis_idx] = source_idx
-        target_slice[axis_idx] = target_idx
-        folded_values[tuple(target_slice)] += values[tuple(source_slice)]
-    folded.values(flow=False)[...] = folded_values
+    src_vals = np.asarray(hist_obj.values(flow=False))
+    folded.values(flow=False)[...] = src_vals[tuple(pos)] + src_vals[tuple(neg)]
 
     if storage_type(hist_obj) == hist.storage.Weight():
-        variances = np.asarray(hist_obj.variances(flow=False))
-        folded_variances = np.zeros_like(folded.variances(flow=False))
-        for source_idx, target_idx in enumerate(target_indices):
-            source_slice = [slice(None)] * variances.ndim
-            target_slice = [slice(None)] * folded_variances.ndim
-            source_slice[axis_idx] = source_idx
-            target_slice[axis_idx] = target_idx
-            folded_variances[tuple(target_slice)] += variances[tuple(source_slice)]
-        folded.variances(flow=False)[...] = folded_variances
+        src_var = np.asarray(hist_obj.variances(flow=False))
+        folded.variances(flow=False)[...] = src_var[tuple(pos)] + src_var[tuple(neg)]
 
     return folded
+
+
+def _clone_axis(axis: Any) -> Any:
+    underflow = getattr(axis.traits, "underflow", True)
+    overflow = getattr(axis.traits, "overflow", True)
+    if isinstance(axis, hist.axis.Regular):
+        return hist.axis.Regular(
+            axis.size,
+            float(axis.edges[0]),
+            float(axis.edges[-1]),
+            name=axis.name,
+            label=axis.label,
+            underflow=underflow,
+            overflow=overflow,
+        )
+    edges = np.asarray(axis.edges, dtype=float)
+    return hist.axis.Variable(
+        edges,
+        name=axis.name,
+        label=axis.label,
+        underflow=underflow,
+        overflow=overflow,
+    )
 
 
 def summarize_output(output: Any) -> list[dict[str, str]]:
@@ -509,6 +527,36 @@ def rebin_controls(reference: hist.Hist, key_prefix: str) -> dict[str, int | np.
     return specs
 
 
+def _strip_flow(h: hist.Hist) -> hist.Hist:
+    """Return a copy of h with underflow and overflow bins discarded."""
+    new_axes = []
+    for axis in h.axes:
+        edges = np.asarray(axis.edges, dtype=float)
+        if isinstance(axis, hist.axis.Regular):
+            new_axes.append(hist.axis.Regular(
+                axis.size,
+                float(edges[0]),
+                float(edges[-1]),
+                name=axis.name,
+                label=axis.label,
+                underflow=False,
+                overflow=False,
+            ))
+        else:
+            new_axes.append(hist.axis.Variable(
+                edges,
+                name=axis.name,
+                label=axis.label,
+                underflow=False,
+                overflow=False,
+            ))
+    stripped = hist.Hist(*new_axes, name=h.name, storage=storage_type(h))
+    stripped.values(flow=False)[...] = h.values(flow=False)
+    if storage_type(h) == hist.storage.Weight():
+        stripped.variances(flow=False)[...] = h.variances(flow=False)
+    return stripped
+
+
 def prepare_hist(
     hist_obj: hist.Hist,
     scale: float,
@@ -531,6 +579,7 @@ def prepare_hist(
             reduced = reduced[{axis_name: slice(hist.loc(low), hist.loc(high))}]
 
     keep = [axis_name for axis_name in plot_axes if axis_name in axis_names(reduced)]
+    reduced = _strip_flow(reduced)
     reduced = reduced.project(*keep)
     if scale != 1.0:
         reduced = reduced * scale
