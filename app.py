@@ -177,7 +177,7 @@ def guess_file_index(role: str, files: list[tuple[str, int]]) -> int | None:
     if role == "Signal":
         patterns = ("signal", "zprime", "rsgluon")
     elif role == "TTbar":
-        patterns = ("ttbar", "ttto", "tt_")
+        patterns = ("ttbar", "ttto")
     else:
         patterns = ("qcd",)
 
