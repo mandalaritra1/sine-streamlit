@@ -25,6 +25,7 @@ DAV_BASE = "https://cernbox.cern.ch/remote.php/dav/public-files"
 DEFAULT_TOKEN = "ou52Fa9fubKwN0M"
 THREE_D_AXES = ("ttbarmass", "jetdy", "chi")
 DEFAULT_HIST_KEY = "mtt_vs_dy_vs_chi"
+APP_CACHE_VERSION = "2026-04-30-no-jetdy-flow-fold"
 SAMPLE_DEFAULTS = {
     "Signal": ("#bd1f01", 1.0),
     "TTbar": ("#3f90da", 1.0),
@@ -71,8 +72,9 @@ def list_share(token: str) -> list[tuple[str, int]]:
 
 
 @st.cache_resource(ttl=600, show_spinner="Downloading and loading histogram...")
-def load_remote_hist(token: str, filename: str, size: int) -> tuple[hist.Hist, list[dict[str, str]]]:
+def load_remote_hist(token: str, filename: str, size: int, cache_version: str) -> tuple[hist.Hist, list[dict[str, str]]]:
     del size
+    del cache_version
     url = f"{DAV_BASE}/{token}/{filename}"
     response = requests.get(url, timeout=120)
     response.raise_for_status()
@@ -162,7 +164,7 @@ def load_samples(token: str, files: list[tuple[str, int]]) -> list[Sample]:
 
     for role, filename, color, scale, size in selected:
         try:
-            hist_obj, summary = load_remote_hist(token, filename, size)
+            hist_obj, summary = load_remote_hist(token, filename, size, APP_CACHE_VERSION)
         except Exception as exc:
             st.error(f"Could not load `{filename}` as a {', '.join(THREE_D_AXES)} histogram.")
             st.exception(exc)
