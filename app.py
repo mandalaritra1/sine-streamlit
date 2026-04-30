@@ -89,7 +89,7 @@ def load_remote_hist(token: str, filename: str, size: int) -> tuple[hist.Hist, l
             output = pickle.load(handle)
 
     try:
-        hist_obj = find_3d_hist(output)
+        hist_obj = fold_signed_jetdy(find_3d_hist(output))
         summary = summarize_output(output)
     finally:
         del output
@@ -198,6 +198,53 @@ def find_3d_hist(output: Any) -> hist.Hist:
         found = ", ".join(f"{key}: {', '.join(axis_names(value))}" for key, value in hists.items())
         raise ValueError(f"No histogram has axes {THREE_D_AXES}. Found: {found or 'no hist.Hist objects'}")
     return candidates[0]
+
+
+def fold_signed_jetdy(hist_obj: hist.Hist) -> hist.Hist:
+    if "jetdy" not in axis_names(hist_obj):
+        return hist_obj
+
+    jetdy_axis = axis_by_name(hist_obj, "jetdy")
+    edges = np.asarray(jetdy_axis.edges, dtype=float)
+    if edges[0] >= 0:
+        return hist_obj
+    if not np.isclose(abs(edges[0]), edges[-1]):
+        return hist_obj
+
+    abs_edges = edges[edges >= 0]
+    if len(abs_edges) < 2:
+        return hist_obj
+
+    folded_axis = hist.axis.Variable(abs_edges, name="jetdy", label=r"$|\Delta y|$")
+    new_axes = [folded_axis if (axis.name == "jetdy") else axis for axis in hist_obj.axes]
+    folded = hist.Hist(*new_axes, name=hist_obj.name, storage=storage_type(hist_obj))
+
+    axis_idx = axis_names(hist_obj).index("jetdy")
+    values = np.asarray(hist_obj.values(flow=False))
+    folded_values = np.zeros_like(folded.values(flow=False))
+    centers = np.asarray(jetdy_axis.centers, dtype=float)
+    target_indices = folded_axis.index(np.abs(centers))
+
+    for source_idx, target_idx in enumerate(target_indices):
+        source_slice = [slice(None)] * values.ndim
+        target_slice = [slice(None)] * folded_values.ndim
+        source_slice[axis_idx] = source_idx
+        target_slice[axis_idx] = target_idx
+        folded_values[tuple(target_slice)] += values[tuple(source_slice)]
+    folded.values(flow=False)[...] = folded_values
+
+    if storage_type(hist_obj) == hist.storage.Weight():
+        variances = np.asarray(hist_obj.variances(flow=False))
+        folded_variances = np.zeros_like(folded.variances(flow=False))
+        for source_idx, target_idx in enumerate(target_indices):
+            source_slice = [slice(None)] * variances.ndim
+            target_slice = [slice(None)] * folded_variances.ndim
+            source_slice[axis_idx] = source_idx
+            target_slice[axis_idx] = target_idx
+            folded_variances[tuple(target_slice)] += variances[tuple(source_slice)]
+        folded.variances(flow=False)[...] = folded_variances
+
+    return folded
 
 
 def summarize_output(output: Any) -> list[dict[str, str]]:
