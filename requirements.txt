@@ -3,5 +3,6 @@ numpy
 requests
 matplotlib
 mplhep
+plotly
 hist
 coffea
