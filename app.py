@@ -16,6 +16,8 @@ import hist
 import matplotlib.pyplot as plt
 import mplhep as hep
 import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 from coffea.util import load as coffea_load
@@ -30,6 +32,14 @@ SAMPLE_DEFAULTS = {
     "Signal": ("#bd1f01", 1.0),
     "TTbar": ("#3f90da", 1.0),
     "QCD": ("#ffa90e", 1.0),
+}
+PLOT_BACKENDS = ("Matplotlib", "Plotly")
+RATIO_COLOR = "#00e5ff"
+REFERENCE_LINE_COLOR = "#b8c2cc"
+PLOTLY_AXIS_LABELS = {
+    "ttbarmass": "m<sub>tt&#772;</sub> [GeV]",
+    "jetdy": "|&#916;y|",
+    "chi": "&#967;<sub>dijet</sub>",
 }
 
 
@@ -104,6 +114,7 @@ def main() -> None:
     with st.sidebar:
         st.header("Source")
         token = st.text_input("CERNBox share token", DEFAULT_TOKEN)
+        plot_backend = st.radio("Plot backend", PLOT_BACKENDS, horizontal=True)
         if st.button("Refresh share", use_container_width=True):
             list_share.clear()
             load_remote_hist.clear()
@@ -116,7 +127,7 @@ def main() -> None:
         return
 
     render_summary(samples)
-    render_viewer(samples)
+    render_viewer(samples, plot_backend)
 
     with st.expander("Loaded object summary", expanded=False):
         render_loaded_summary(samples)
@@ -291,7 +302,7 @@ def render_summary(samples: list[Sample]) -> None:
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
-def render_viewer(samples: list[Sample]) -> None:
+def render_viewer(samples: list[Sample], plot_backend: str) -> None:
     reference = samples[0].hist_obj
     mtt_axis = axis_by_name(reference, "ttbarmass")
     mtt_edges = np.asarray(mtt_axis.edges, dtype=float)
@@ -299,13 +310,18 @@ def render_viewer(samples: list[Sample]) -> None:
     tabs = st.tabs(["Projection", "Range slices"])
 
     with tabs[0]:
-        render_projection_slices(samples, reference)
+        render_projection_slices(samples, reference, plot_backend)
 
     with tabs[1]:
-        render_range_slices(samples, reference, mtt_edges)
+        render_range_slices(samples, reference, mtt_edges, plot_backend)
 
 
-def render_range_slices(samples: list[Sample], reference: hist.Hist, mtt_edges: np.ndarray) -> None:
+def render_range_slices(
+    samples: list[Sample],
+    reference: hist.Hist,
+    mtt_edges: np.ndarray,
+    plot_backend: str,
+) -> None:
     st.subheader("ttbarmass by chi/dy range")
 
     control_cols = st.columns([0.9, 1.5, 0.8, 0.8, 0.8])
@@ -363,10 +379,10 @@ def render_range_slices(samples: list[Sample], reference: hist.Hist, mtt_edges: 
         for col, (label, projected) in zip(cols, sliced_groups[row_start : row_start + 2]):
             with col:
                 st.markdown(f"#### {label}")
-                render_1d(projected, "ttbarmass", density, log_y, show_ratio, show_ttbar_qcd_ratio)
+                render_1d(projected, "ttbarmass", density, log_y, show_ratio, show_ttbar_qcd_ratio, plot_backend)
 
 
-def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> None:
+def render_projection_slices(samples: list[Sample], reference: hist.Hist, plot_backend: str) -> None:
     st.subheader("dy and chi by ttbarmass range")
 
     control_cols = st.columns([0.8, 0.8, 0.8, 1.2])
@@ -414,11 +430,11 @@ def render_projection_slices(samples: list[Sample], reference: hist.Hist) -> Non
         cols = st.columns(2)
         with cols[0]:
             st.markdown(f"#### {axis_label(projected_dy[0][1], axis_name_dy)} | {range_label}")
-            render_1d(projected_dy, axis_name_dy, density, log_y, show_ratio, show_ttbar_qcd_ratio)
+            render_1d(projected_dy, axis_name_dy, density, log_y, show_ratio, show_ttbar_qcd_ratio, plot_backend)
         with cols[1]:
             if projected_chi is not None:
                 st.markdown(f"#### {axis_label(projected_chi[0][1], 'chi')} | {range_label}")
-                render_1d(projected_chi, "chi", density, log_y, show_ratio, show_ttbar_qcd_ratio)
+                render_1d(projected_chi, "chi", density, log_y, show_ratio, show_ttbar_qcd_ratio, plot_backend)
 
 
 def next_group(
@@ -595,6 +611,7 @@ def render_1d(
     log_scale: bool,
     show_ratio: bool,
     show_ttbar_qcd_ratio: bool,
+    plot_backend: str,
 ) -> None:
     ratio_kinds = []
     if show_ratio:
@@ -602,6 +619,20 @@ def render_1d(
     if show_ttbar_qcd_ratio:
         ratio_kinds.append("ttbar_over_qcd")
 
+    if plot_backend == "Plotly":
+        render_1d_plotly(projected, axis_name, density, log_scale, ratio_kinds)
+        return
+
+    render_1d_matplotlib(projected, axis_name, density, log_scale, ratio_kinds)
+
+
+def render_1d_matplotlib(
+    projected: list[tuple[Sample, hist.Hist]],
+    axis_name: str,
+    density: bool,
+    log_scale: bool,
+    ratio_kinds: list[str],
+) -> None:
     if ratio_kinds:
         height_ratios = [3] + [1] * len(ratio_kinds)
         fig, axes = plt.subplots(
@@ -651,6 +682,127 @@ def render_1d(
     st.pyplot(fig, clear_figure=True)
 
 
+def render_1d_plotly(
+    projected: list[tuple[Sample, hist.Hist]],
+    axis_name: str,
+    density: bool,
+    log_scale: bool,
+    ratio_kinds: list[str],
+) -> None:
+    row_count = 1 + len(ratio_kinds)
+    row_heights = [0.72] + [0.14] * len(ratio_kinds) if ratio_kinds else [1.0]
+    fig = make_subplots(
+        rows=row_count,
+        cols=1,
+        shared_xaxes=bool(ratio_kinds),
+        vertical_spacing=0.035 if ratio_kinds else 0.02,
+        row_heights=row_heights,
+    )
+
+    for sample, hist_obj in projected:
+        values = np.asarray(hist_obj.values(), dtype=float)
+        if density:
+            total = values.sum()
+            if total > 0:
+                values = values / total
+        edges = np.asarray(axis_by_name(hist_obj, axis_name).edges, dtype=float)
+        fig.add_trace(
+            go.Scatter(
+                x=step_x(edges),
+                y=step_y(values),
+                mode="lines",
+                line={"color": sample.color, "width": 2},
+                name=f"{sample.role} ({values.sum():.3g})",
+                hovertemplate=f"{sample.role}<br>{axis_name}: %{{x:.4g}}<br>value: %{{y:.4g}}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    yaxis_type = "log" if log_scale else "linear"
+    fig.update_yaxes(title_text="Density" if density else "Events", type=yaxis_type, row=1, col=1)
+
+    for idx, ratio_kind in enumerate(ratio_kinds, start=2):
+        ratio, edges, ylabel = ratio_trace(projected, axis_name, density, ratio_kind)
+        if ratio is None or edges is None:
+            fig.add_annotation(
+                text=ylabel,
+                x=0.5,
+                y=0.5,
+                xref=f"x{idx} domain" if idx > 1 else "x domain",
+                yref=f"y{idx} domain" if idx > 1 else "y domain",
+                showarrow=False,
+            )
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=step_x(edges),
+                y=step_y(ratio),
+                mode="lines",
+                line={"color": RATIO_COLOR, "width": 2.0},
+                name=ylabel,
+                showlegend=False,
+                hovertemplate=f"{ylabel}<br>{axis_name}: %{{x:.4g}}<br>ratio: %{{y:.4g}}<extra></extra>",
+            ),
+            row=idx,
+            col=1,
+        )
+        fig.add_hline(y=1.0, line_dash="dash", line_color=REFERENCE_LINE_COLOR, line_width=1, row=idx, col=1)
+        fig.update_yaxes(title_text=ylabel, rangemode="tozero", row=idx, col=1)
+
+    fig.update_xaxes(title_text=plotly_axis_label(projected[0][1], axis_name), row=row_count, col=1)
+    fig.update_layout(
+        height=430 + 120 * len(ratio_kinds),
+        margin={"l": 70, "r": 20, "t": 20, "b": 55},
+        hovermode="x unified",
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+        template="plotly_white",
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False, "responsive": True})
+
+
+def step_x(edges: np.ndarray) -> np.ndarray:
+    return np.repeat(edges, 2)[1:-1]
+
+
+def step_y(values: np.ndarray) -> np.ndarray:
+    return np.repeat(values, 2)
+
+
+def ratio_trace(
+    projected: list[tuple[Sample, hist.Hist]],
+    axis_name: str,
+    density: bool,
+    ratio_kind: str,
+) -> tuple[np.ndarray | None, np.ndarray | None, str]:
+    by_role = {sample.role: hist_obj for sample, hist_obj in projected}
+    if ratio_kind == "signal_over_background":
+        missing = {"Signal", "TTbar", "QCD"} - set(by_role)
+        ylabel = "S/B"
+    else:
+        missing = {"TTbar", "QCD"} - set(by_role)
+        ylabel = "TT/QCD"
+
+    if missing:
+        return None, None, f"Missing {', '.join(sorted(missing))}"
+
+    if ratio_kind == "signal_over_background":
+        numerator = ratio_values(by_role["Signal"], density)
+        denominator = ratio_values(by_role["TTbar"], density) + ratio_values(by_role["QCD"], density)
+        edges = axis_by_name(by_role["Signal"], axis_name).edges
+    else:
+        numerator = ratio_values(by_role["TTbar"], density)
+        denominator = ratio_values(by_role["QCD"], density)
+        edges = axis_by_name(by_role["TTbar"], axis_name).edges
+
+    ratio = np.divide(numerator, denominator, out=np.full_like(numerator, np.nan), where=denominator != 0)
+    return ratio, np.asarray(edges, dtype=float), ylabel
+
+
+def plotly_axis_label(hist_obj: hist.Hist, axis_name: str) -> str:
+    return PLOTLY_AXIS_LABELS.get(axis_name, axis_label(hist_obj, axis_name))
+
+
 def render_ratio(
     projected: list[tuple[Sample, hist.Hist]],
     axis_name: str,
@@ -680,8 +832,8 @@ def render_ratio(
         edges = axis_by_name(by_role["TTbar"], axis_name).edges
 
     ratio = np.divide(numerator, denominator, out=np.full_like(numerator, np.nan), where=denominator != 0)
-    ax.stairs(ratio, edges, color="black")
-    ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0)
+    ax.stairs(ratio, edges, color=RATIO_COLOR, linewidth=1.6)
+    ax.axhline(1.0, color=REFERENCE_LINE_COLOR, linestyle="--", linewidth=1.0)
     ax.set_ylabel(ylabel, fontsize=16, labelpad=10)
     ax.tick_params(axis="both", which="major", labelsize=14)
     ax.tick_params(axis="both", which="minor", labelsize=12)
